@@ -1,0 +1,138 @@
+name: Deploy knowledge base
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - ".gitignore"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Emergency force deployment (skips the test job)"
+        type: boolean
+        default: false
+
+# Only one run at a time; older queued/in-progress runs are cancelled
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+# Least privilege by default; jobs elevate only what they need
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: ${{ !inputs.force }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint:all
+
+      - name: Run scripts
+        env:
+          URL_CHECKER_TIMEOUT: ${{ vars.URL_CHECKER_TIMEOUT }}
+        run: |
+          for f in script/*.js; do
+            case "$f" in
+              */url-checker.js) node "$f" -t "${URL_CHECKER_TIMEOUT:-5}" ;;
+              *) node "$f" ;;
+            esac
+          done
+
+  build:
+    needs: test
+    # Run when tests passed, or when tests were skipped by a forced deployment
+    if: ${{ !cancelled() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && inputs.force)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build site
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          export PATH_PREFIX="/$(echo "$REPOSITORY" | cut -d'/' -f2-)/"
+          npm run eleventy:prod
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: [test, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+      issues: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: built-site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Report deployment status
+        if: ${{ always() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          OUTCOME: ${{ steps.deployment.outcome }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          echo "$GITHUB_TOKEN" | gh auth login --with-token
+          if [ "$OUTCOME" = "success" ]; then STATUS="succeeded"; else STATUS="failed"; fi
+          gh issue create \
+            --repo "$REPOSITORY" \
+            --title "$(date -u +%F) - Deployment: $STATUS" \
+            --body "URL: $PAGE_URL"
