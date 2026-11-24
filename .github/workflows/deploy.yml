@@ -26,10 +26,15 @@ concurrency:
 permissions:
   contents: read
 
+# The workflow scripts are written for bash (also on Windows self-hosted runners)
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     if: ${{ !inputs.force }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     steps:
       - name: Checkout
@@ -64,7 +69,7 @@ jobs:
     needs: test
     # Run when tests passed, or when tests were skipped by a forced deployment
     if: ${{ !cancelled() && (needs.test.result == 'success' || (needs.test.result == 'skipped' && inputs.force)) }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     permissions:
       contents: read
@@ -102,7 +107,7 @@ jobs:
   deploy:
     needs: [test, build]
     if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     permissions:
       pages: write
