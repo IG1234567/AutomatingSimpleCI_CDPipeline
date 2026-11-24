@@ -1,62 +1,108 @@
-#!/usr/bin/env node
-/* Checks that every http(s) URL found in markdown files under a directory is reachable. */
-const fs = require("fs");
-const path = require("path");
+#!/bin/env node
+/** 
+ * 
+ * MIT License
+ * 
+ * Copyright (c) 2024 Bassem Dghaidi
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ * 
+ * ---
+ * 
+ * This code is for illustration purposes. Do not use it in production.
+ * 
+ * This script will crawl all the pages of this website and call each external URL
+ * to make sure none return a 404 error. These are markdown pages.
+ * 
+ * Usage:
+ *  node url-checker.js -t <timeout> -p <path>
+ * 
+ * Options:
+ *  -t, --timeout <timeout>  The timeout in seconds for each request. Default is 5000.
+ */
 
-function parseArgs(argv) {
-  const opts = { timeout: 5, directory: "src/posts" };
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "-t" || argv[i] === "--timeout") opts.timeout = Number(argv[++i]);
-    else if (argv[i] === "-d" || argv[i] === "--directory") opts.directory = argv[++i];
-  }
-  if (!Number.isFinite(opts.timeout) || opts.timeout <= 0) {
-    throw new Error("timeout must be a positive number of seconds");
-  }
-  return opts;
-}
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const marked = require('marked');
+const { ArgumentParser } = require('argparse');
+const { exit } = require('process');
 
-function findMarkdown(dir) {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return findMarkdown(full);
-    return entry.name.endsWith(".md") ? [full] : [];
-  });
-}
-
-async function check(url, timeoutSeconds) {
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      signal: AbortSignal.timeout(timeoutSeconds * 1000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function main() {
-  const { timeout, directory } = parseArgs(process.argv.slice(2));
-  const urls = new Set();
-  for (const file of findMarkdown(directory)) {
-    const text = fs.readFileSync(file, "utf8");
-    for (const m of text.matchAll(/https?:\/\/[^\s)>\]"']+/g)) urls.add(m[0]);
-  }
-
-  const results = await Promise.all(
-    [...urls].map(async (url) => ({ url, ok: await check(url, timeout) }))
-  );
-  const broken = results.filter((r) => !r.ok);
-  results.forEach((r) => console.log(`${r.ok ? "OK  " : "FAIL"} ${r.url}`));
-
-  if (broken.length > 0) {
-    console.error(`${broken.length} broken URL(s)`);
-    process.exit(1);
-  }
-  console.log(`Checked ${results.length} URL(s)`);
-}
-
-main().catch((err) => {
-  console.error(err.message);
-  process.exit(1);
+const parser = new ArgumentParser({
+    description: 'URL Checker'
 });
+parser.add_argument('-t', '--timeout', { help: 'The timeout in seconds for each request' });
+parser.add_argument('-d', '--directory', { help: 'The path to the posts directory' });
+const args = parser.parse_args();
+const timeoutSeconds = args.timeout * 1000 || 5000;
+const postsDir = args.dir || __dirname + '/../src/posts';
+
+// Recusively get all the markdown files (.md) only in the posts directory
+const walkSync = (dir, filelist = []) => {
+    fs.readdirSync(dir).forEach(file => {
+        const filePath = path.join(dir, file);
+        if (fs.statSync(filePath).isDirectory()) {
+            filelist = walkSync(filePath, filelist);
+        } else {
+            if (filePath.endsWith('.md')) {
+                filelist = [...filelist, filePath];
+            }
+        }
+    });
+    return filelist;
+}
+
+// Read a list of file paths, parse the markdown and return all the URLs
+const getUrls = (filePaths) => {
+    let urls = [];
+    filePaths.forEach(filePath => {
+        const markdown = fs.readFileSync(filePath, { encoding: 'utf-8' });
+        const tokens = marked.lexer(markdown);
+        // Recursively go through the tokens to find all the links
+        const findLinks = (token) => {
+            if (token.type === 'link') {
+                urls = [...urls, token.href];
+            }
+            if (token.tokens) {
+                token.tokens.forEach(findLinks);
+            }
+        }
+        tokens.forEach(findLinks);
+    });
+    return urls;
+}
+
+// Call each URL and if the status code is 404, print an error and exit with non 0
+const checkUrl = async (url) => {
+    try {
+        const response = await axios.get(url, { timeoutSeconds });
+        console.log(`${response.status} - ${url}`);
+    }
+    catch (error) {
+        console
+            .error(`404 - ${url}`);
+        exit(1);
+    }
+}
+
+// Run
+const filePaths = walkSync(postsDir);
+const urls = getUrls(filePaths);
+urls.forEach(url => checkUrl(url));
+console.log('All URLs are valid');
