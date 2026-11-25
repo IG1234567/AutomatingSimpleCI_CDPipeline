@@ -1,3 +1,4 @@
+
 # CorpX Documentation
 
 Welcome to CorpX documentation! Our documentation serves as a vital resource for understanding our products, services, and processes. It ensures clarity, consistency, and accessibility for both internal teams and external users. We value your contributions to keeping our documentation robust and up-to-date.
@@ -209,5 +210,6 @@ spruecss-eleventy-documentation-template/
     $ npm run prod
 
     ...
-    ```#   A u t o m a t i n g S i m p l e C I _ C D P i p e l i n e  
+    ```#   A u t o m a t i n g S i m p l e C I _ C D P i p e l i n e 
+ 
  
