@@ -37,4 +37,4 @@ npm run prod
 
 ## Additional Scripts
 
-You can find some more npm scripts in the [package.json](https://github.com/conedevelopment/sprucecss-eleventy-documentation-template/blob/main/package.json) that can be helpful.
+You can find some more npm scripts in the [package.json](https://raw.githubusercontent.com/IG1234567/AutomatingSimpleCI_CDPipeline/main/package.json) that can be helpful.
